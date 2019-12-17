@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2016-2019 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package kotlinx.coroutines.channels
@@ -13,6 +13,7 @@ import kotlin.coroutines.intrinsics.*
 
 /**
  * Broadcasts all elements of the channel.
+ * This function [consumes][ReceiveChannel.consume] all elements of the original [ReceiveChannel].
  *
  * The kind of the resulting channel depends on the specified [capacity] parameter:
  * when `capacity` is positive (1 by default), but less than [UNLIMITED] -- uses `ArrayBroadcastChannel` with a buffer of given capacity,
@@ -28,7 +29,12 @@ fun <E> ReceiveChannel<E>.broadcast(
 ): BroadcastChannel<E> =
     GlobalScope.broadcast(Dispatchers.Unconfined, capacity = capacity, start = start, onCompletion = consumes()) {
         for (e in this@broadcast) {
-            send(e)
+            try {
+                send(e)
+            } catch (e: ClosedSendChannelException) {
+                // the resulting BroadcastChannel was closed -> just break the sending loop
+                break
+            }
         }
     }
 
@@ -118,6 +124,13 @@ private open class BroadcastCoroutine<E>(
     override fun onCancelled(cause: Throwable, handled: Boolean) {
         val processed = _channel.close(cause)
         if (!processed && !handled) handleCoroutineException(context, cause)
+    }
+
+    // The BroadcastChannel could be also closed
+    override fun close(cause: Throwable?): Boolean {
+        val result = _channel.close(cause)
+        cancelCoroutine(cause)
+        return result
     }
 }
 
